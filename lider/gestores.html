@@ -52,7 +52,7 @@
 
   <script type="module">
     import { requireRole, getSession } from "../js/auth.js";
-    import { supabase, CREATE_USER_FUNCTION_URL } from "../js/supabase-client.js";
+    import { supabase, CREATE_USER_FUNCTION_URL, SUPABASE_ANON_KEY } from "../js/supabase-client.js";
     import { renderSidebar, formatMoney, showAlert, clearAlert } from "../js/layout.js";
 
     let profile;
