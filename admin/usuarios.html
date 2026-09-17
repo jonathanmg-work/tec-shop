@@ -83,7 +83,7 @@
 
   <script type="module">
     import { requireRole, getSession } from "../js/auth.js";
-    import { supabase, CREATE_USER_FUNCTION_URL } from "../js/supabase-client.js";
+    import { supabase, CREATE_USER_FUNCTION_URL, SUPABASE_ANON_KEY } from "../js/supabase-client.js";
     import { renderSidebar, showAlert, clearAlert, escapeHtml } from "../js/layout.js";
 
     let currentTab = "pending_approval";
