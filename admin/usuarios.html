@@ -154,9 +154,13 @@
         const session = await getSession();
         const res = await fetch(CREATE_USER_FUNCTION_URL, {
           method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-          body: JSON.stringify(payload),
-        });
+          headers: {
+            "Content-Type": "application/json",
+            apikey: SUPABASE_ANON_KEY,
+            Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify(payload),
+      });
         const result = await res.json();
         if (!res.ok) throw new Error(result.error || "No se pudo crear la cuenta.");
 
