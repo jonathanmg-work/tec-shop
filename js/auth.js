@@ -36,7 +36,7 @@ export async function login(email, password) {
 
 export async function logout() {
   await supabase.auth.signOut();
-  window.location.href = "/index.html";
+  window.location.href = "/tec-shop/index.html";
 }
 
 export async function getSession() {
@@ -62,7 +62,7 @@ export async function requireRole(allowedRoles) {
   const session = await getSession();
 
   if (!session) {
-    window.location.href = "/index.html";
+    window.location.href = "/tec-shop/index.html";
     throw new Error("redirect");
   }
 
@@ -70,7 +70,7 @@ export async function requireRole(allowedRoles) {
 
   if (!profile || profile.status !== "active") {
     await supabase.auth.signOut();
-    window.location.href = "/index.html";
+    window.location.href = "/tec-shop/index.html";
     throw new Error("redirect");
   }
 
@@ -83,9 +83,9 @@ export async function requireRole(allowedRoles) {
 }
 
 export function redirectPathForRole(role) {
-  if (role === "admin") return "/admin/dashboard.html";
-  if (role === "leader") return "/lider/dashboard.html";
-  return "/gestor/dashboard.html";
+  if (role === "admin") return "/tec-shop/admin/dashboard.html";
+  if (role === "leader") return "/tec-shop/lider/dashboard.html";
+  return "/tec-shop/gestor/dashboard.html";
 }
 
 function traducirErrorAuth(message) {

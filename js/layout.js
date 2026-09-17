@@ -9,21 +9,21 @@ import { logout } from "./auth.js";
 
 const NAV_BY_ROLE = {
   admin: [
-    { href: "/admin/dashboard.html", label: "Dashboard", key: "dashboard" },
-    { href: "/admin/vales.html", label: "Vales", key: "vales" },
-    { href: "/admin/pagos.html", label: "Pagos semanales", key: "pagos" },
-    { href: "/admin/usuarios.html", label: "Usuarios", key: "usuarios" },
-    { href: "/admin/catalogo.html", label: "Catálogo", key: "catalogo" },
-    { href: "/admin/configuracion.html", label: "Configuración", key: "configuracion" },
+    { href: "/tec-shop/admin/dashboard.html", label: "Dashboard", key: "dashboard" },
+    { href: "/tec-shop/admin/vales.html", label: "Vales", key: "vales" },
+    { href: "/tec-shop/admin/pagos.html", label: "Pagos semanales", key: "pagos" },
+    { href: "/tec-shop/admin/usuarios.html", label: "Usuarios", key: "usuarios" },
+    { href: "/tec-shop/admin/catalogo.html", label: "Catálogo", key: "catalogo" },
+    { href: "/tec-shop/admin/configuracion.html", label: "Configuración", key: "configuracion" },
   ],
   leader: [
-    { href: "/lider/dashboard.html", label: "Dashboard", key: "dashboard" },
-    { href: "/lider/gestores.html", label: "Mis gestores", key: "gestores" },
+    { href: "/tec-shop/lider/dashboard.html", label: "Dashboard", key: "dashboard" },
+    { href: "/tec-shop/lider/gestores.html", label: "Mis gestores", key: "gestores" },
   ],
   gestor: [
-    { href: "/gestor/dashboard.html", label: "Dashboard", key: "dashboard" },
-    { href: "/gestor/catalogo.html", label: "Catálogo y vale nuevo", key: "catalogo" },
-    { href: "/gestor/mis-vales.html", label: "Mis vales", key: "mis-vales" },
+    { href: "/tec-shop/gestor/dashboard.html", label: "Dashboard", key: "dashboard" },
+    { href: "/tec-shop/gestor/catalogo.html", label: "Catálogo y vale nuevo", key: "catalogo" },
+    { href: "/tec-shop/gestor/mis-vales.html", label: "Mis vales", key: "mis-vales" },
   ],
 };
 
