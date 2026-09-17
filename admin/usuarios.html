@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Usuarios | Admin</title>
+  <meta name="robots" content="noindex, nofollow" />
+  <link rel="stylesheet" href="../css/style.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar"></aside>
+
+    <main class="main-content">
+      <h1 class="page-title">Usuarios</h1>
+      <p class="page-subtitle">Crea líderes y gestores, aprueba cuentas nuevas y administra su estado.</p>
+
+      <div id="alert-box"></div>
+
+      <div class="card" style="margin-bottom:1.2rem;">
+        <h3 style="margin-top:0">Crear cuenta nueva</h3>
+        <div class="field-row">
+          <div class="field">
+            <label for="new-name">Nombre completo</label>
+            <input type="text" id="new-name" />
+          </div>
+          <div class="field">
+            <label for="new-email">Correo</label>
+            <input type="email" id="new-email" />
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label for="new-password">Contraseña temporal</label>
+            <input type="password" id="new-password" placeholder="Mínimo 8 caracteres" />
+          </div>
+          <div class="field">
+            <label for="new-role">Tipo de cuenta</label>
+            <select id="new-role">
+              <option value="gestor">Gestor</option>
+              <option value="leader">Líder</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="field-row" id="gestor-extra-fields">
+          <div class="field">
+            <label for="new-leader">Asignar a líder (opcional)</label>
+            <select id="new-leader"><option value="">Sin líder</option></select>
+          </div>
+          <div class="checkbox-row" style="align-items:flex-end; padding-bottom:0.6rem;">
+            <input type="checkbox" id="new-vip" />
+            <label for="new-vip" style="margin:0">Es gestor VIP</label>
+          </div>
+        </div>
+
+        <div class="field" id="leader-extra-fields" style="display:none; max-width:260px;">
+          <label for="new-override">% de override para este líder</label>
+          <input type="number" id="new-override" value="10" step="0.5" min="0" max="100" />
+        </div>
+
+        <button class="btn btn-primary" id="btn-create" type="button">Crear cuenta</button>
+      </div>
+
+      <div class="tabs" id="tabs">
+        <button class="tab-btn active" data-status="pending_approval">Pendientes de aprobación</button>
+        <button class="tab-btn" data-status="active">Activos</button>
+        <button class="tab-btn" data-status="inactive">Suspendidos</button>
+      </div>
+
+      <div class="card">
+        <table>
+          <thead>
+            <tr><th>Nombre</th><th>Correo</th><th>Rol</th><th>Detalle</th><th>Estado</th><th>Acciones</th></tr>
+          </thead>
+          <tbody id="users-body">
+            <tr><td colspan="6" class="empty-hint">Cargando...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </main>
+  </div>
+
+  <script type="module">
+    import { requireRole, getSession } from "../js/auth.js";
+    import { supabase, CREATE_USER_FUNCTION_URL } from "../js/supabase-client.js";
+    import { renderSidebar, showAlert, clearAlert, escapeHtml } from "../js/layout.js";
+
+    let currentTab = "pending_approval";
+    let allLeaders = [];
+
+    (async () => {
+      let profile;
+      try {
+        ({ profile } = await requireRole(["admin"]));
+      } catch {
+        return;
+      }
+
+      renderSidebar(profile, "usuarios");
+      await loadLeadersForSelect();
+      await loadUsers();
+
+      document.getElementById("new-role").addEventListener("change", (e) => {
+        const isLeader = e.target.value === "leader";
+        document.getElementById("gestor-extra-fields").style.display = isLeader ? "none" : "grid";
+        document.getElementById("leader-extra-fields").style.display = isLeader ? "block" : "none";
+      });
+
+      document.getElementById("btn-create").addEventListener("click", crearCuenta);
+
+      document.querySelectorAll("#tabs .tab-btn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          document.querySelectorAll("#tabs .tab-btn").forEach((b) => b.classList.remove("active"));
+          btn.classList.add("active");
+          currentTab = btn.dataset.status;
+          loadUsers();
+        });
+      });
+    })();
+
+    async function loadLeadersForSelect() {
+      const { data } = await supabase.from("profiles").select("id, full_name").eq("role", "leader").eq("status", "active");
+      allLeaders = data || [];
+      const select = document.getElementById("new-leader");
+      select.innerHTML =
+        `<option value="">Sin líder</option>` + allLeaders.map((l) => `<option value="${l.id}">${escapeHtml(l.full_name)}</option>`).join("");
+    }
+
+    async function crearCuenta() {
+      clearAlert("alert-box");
+      const name = document.getElementById("new-name").value.trim();
+      const email = document.getElementById("new-email").value.trim();
+      const password = document.getElementById("new-password").value;
+      const role = document.getElementById("new-role").value;
+      const btn = document.getElementById("btn-create");
+
+      if (!name || !email || !password) {
+        showAlert("alert-box", "Completa nombre, correo y contraseña.");
+        return;
+      }
+
+      const payload = { email, password, full_name: name, role };
+      if (role === "leader") {
+        payload.override_percentage = parseFloat(document.getElementById("new-override").value) || 10;
+      } else {
+        payload.is_vip = document.getElementById("new-vip").checked;
+      }
+
+      btn.disabled = true;
+      btn.textContent = "Creando...";
+
+      try {
+        const session = await getSession();
+        const res = await fetch(CREATE_USER_FUNCTION_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify(payload),
+        });
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error || "No se pudo crear la cuenta.");
+
+        // Si el admin creó un gestor con líder asignado directamente, actualizarlo
+        // (la Edge Function solo asigna leader_id automáticamente cuando lo crea un líder).
+        if (role === "gestor") {
+          const leaderId = document.getElementById("new-leader").value;
+          if (leaderId) {
+            await supabase.from("gestores").update({ leader_id: leaderId }).eq("id", result.user_id);
+          }
+        }
+
+        showAlert("alert-box", "Cuenta creada correctamente.", "success");
+        document.getElementById("new-name").value = "";
+        document.getElementById("new-email").value = "";
+        document.getElementById("new-password").value = "";
+        loadUsers();
+      } catch (err) {
+        showAlert("alert-box", err.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Crear cuenta";
+      }
+    }
+
+    async function loadUsers() {
+      const tbody = document.getElementById("users-body");
+      tbody.innerHTML = `<tr><td colspan="6" class="empty-hint">Cargando...</td></tr>`;
+
+      const { data: profiles, error } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("status", currentTab)
+        .neq("role", "admin")
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        showAlert("alert-box", "No se pudieron cargar los usuarios: " + error.message);
+        return;
+      }
+
+      if (!profiles || !profiles.length) {
+        tbody.innerHTML = `<tr><td colspan="6" class="empty-hint">No hay usuarios en esta vista.</td></tr>`;
+        return;
+      }
+
+      // Traer detalle específico de cada rol (VIP / líder asignado / override)
+      const gestorIds = profiles.filter((p) => p.role === "gestor").map((p) => p.id);
+      const leaderIds = profiles.filter((p) => p.role === "leader").map((p) => p.id);
+
+      const [{ data: gestoresData }, { data: leadersData }] = await Promise.all([
+        gestorIds.length
+          ? supabase.from("gestores").select("id, is_vip, leader_id, leaders(profiles(full_name))").in("id", gestorIds)
+          : Promise.resolve({ data: [] }),
+        leaderIds.length
+          ? supabase.from("leaders").select("id, override_percentage").in("id", leaderIds)
+          : Promise.resolve({ data: [] }),
+      ]);
+
+      const gestoresMap = Object.fromEntries((gestoresData || []).map((g) => [g.id, g]));
+      const leadersMap = Object.fromEntries((leadersData || []).map((l) => [l.id, l]));
+
+      tbody.innerHTML = profiles
+        .map((p) => {
+          let detalle = "—";
+          if (p.role === "gestor") {
+            const g = gestoresMap[p.id];
+            const liderNombre = g?.leaders?.profiles?.full_name;
+            detalle = g?.is_vip ? "VIP" : liderNombre ? `Líder: ${escapeHtml(liderNombre)}` : "Sin líder";
+          } else if (p.role === "leader") {
+            const l = leadersMap[p.id];
+            detalle = l ? `Override ${l.override_percentage}%` : "—";
+          }
+
+          const roleLabel = { leader: "Líder", gestor: "Gestor" }[p.role] || p.role;
+
+          const actions = [];
+          if (p.status === "pending_approval") {
+            actions.push(`<button class="btn btn-success btn-sm" data-approve="${p.id}" type="button">Aprobar</button>`);
+            actions.push(`<button class="btn btn-danger btn-sm" data-reject="${p.id}" type="button">Rechazar</button>`);
+          }
+          if (p.status === "active") {
+            actions.push(`<button class="btn btn-danger btn-sm" data-suspend="${p.id}" type="button">Suspender</button>`);
+            if (p.role === "gestor") {
+              actions.push(`<button class="btn btn-outline btn-sm" data-toggle-vip="${p.id}" data-current="${gestoresMap[p.id]?.is_vip}" type="button">${gestoresMap[p.id]?.is_vip ? "Quitar VIP" : "Hacer VIP"}</button>`);
+            }
+          }
+          if (p.status === "inactive") {
+            actions.push(`<button class="btn btn-success btn-sm" data-activate="${p.id}" type="button">Reactivar</button>`);
+          }
+
+          return `
+          <tr>
+            <td>${escapeHtml(p.full_name)}</td>
+            <td>${escapeHtml(p.email)}</td>
+            <td>${roleLabel}</td>
+            <td>${detalle}</td>
+            <td><span class="badge badge-${p.status}">${{ active: "Activo", inactive: "Suspendido", pending_approval: "Pendiente" }[p.status]}</span></td>
+            <td style="display:flex; gap:0.35rem; flex-wrap:wrap;">${actions.join("")}</td>
+          </tr>`;
+        })
+        .join("");
+
+      attachActionHandlers();
+    }
+
+    function attachActionHandlers() {
+      document.querySelectorAll("[data-approve]").forEach((btn) =>
+        btn.addEventListener("click", () => cambiarEstado(btn.dataset.approve, "active"))
+      );
+      document.querySelectorAll("[data-reject]").forEach((btn) =>
+        btn.addEventListener("click", () => cambiarEstado(btn.dataset.reject, "inactive"))
+      );
+      document.querySelectorAll("[data-suspend]").forEach((btn) =>
+        btn.addEventListener("click", () => cambiarEstado(btn.dataset.suspend, "inactive"))
+      );
+      document.querySelectorAll("[data-activate]").forEach((btn) =>
+        btn.addEventListener("click", () => cambiarEstado(btn.dataset.activate, "active"))
+      );
+      document.querySelectorAll("[data-toggle-vip]").forEach((btn) =>
+        btn.addEventListener("click", () => toggleVip(btn.dataset.toggleVip, btn.dataset.current === "true"))
+      );
+    }
+
+    async function cambiarEstado(profileId, nuevoEstado) {
+      const { error } = await supabase.from("profiles").update({ status: nuevoEstado }).eq("id", profileId);
+      if (error) {
+        showAlert("alert-box", "No se pudo actualizar: " + error.message);
+        return;
+      }
+      loadUsers();
+    }
+
+    async function toggleVip(gestorId, current) {
+      const { error } = await supabase.from("gestores").update({ is_vip: !current }).eq("id", gestorId);
+      if (error) {
+        showAlert("alert-box", "No se pudo actualizar VIP: " + error.message);
+        return;
+      }
+      loadUsers();
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pagos semanales | Admin</title>
+  <meta name="robots" content="noindex, nofollow" />
+  <link rel="stylesheet" href="../css/style.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar"></aside>
+
+    <main class="main-content">
+      <h1 class="page-title">Pagos pendientes de la semana</h1>
+      <p class="page-subtitle">Comisiones pendientes de pago en efectivo, agrupadas por persona.</p>
+
+      <div id="alert-box"></div>
+
+      <div class="card" style="margin-bottom:1.2rem;">
+        <div class="field-row">
+          <div class="field">
+            <label for="start-date">Desde</label>
+            <input type="date" id="start-date" />
+          </div>
+          <div class="field">
+            <label for="end-date">Hasta</label>
+            <input type="date" id="end-date" />
+          </div>
+        </div>
+        <button class="btn btn-outline" id="btn-filter" type="button">Filtrar</button>
+        <button class="btn btn-outline" id="btn-current-week" type="button">Semana actual</button>
+      </div>
+
+      <div class="stat-grid" id="stat-grid">
+        <div class="stat-card"><div class="value">—</div><div class="label">Total pendiente en el rango</div></div>
+        <div class="stat-card"><div class="value">—</div><div class="label">Personas con pago pendiente</div></div>
+      </div>
+
+      <div class="card">
+        <table>
+          <thead>
+            <tr><th>Nombre</th><th>Rol</th><th>Vales incluidos</th><th>Monto pendiente</th><th>Acciones</th></tr>
+          </thead>
+          <tbody id="payouts-body">
+            <tr><td colspan="5" class="empty-hint">Cargando...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </main>
+  </div>
+
+  <!-- Modal detalle -->
+  <div id="detail-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); align-items:center; justify-content:center; z-index:50; padding:1rem;">
+    <div class="card" style="max-width:480px; width:100%; max-height:80vh; overflow-y:auto;">
+      <h3 style="margin-top:0" id="detail-title">Detalle</h3>
+      <table>
+        <thead><tr><th>Vale</th><th>Rol en el vale</th><th>Monto</th><th>Aprobado</th></tr></thead>
+        <tbody id="detail-body"></tbody>
+      </table>
+
+      <hr style="border-color:var(--border); margin:1rem 0" />
+
+      <h4 style="margin:0 0 0.6rem">Registrar pago en efectivo</h4>
+      <div class="field">
+        <label for="payout-amount">Monto pagado</label>
+        <input type="number" id="payout-amount" step="0.01" min="0" />
+      </div>
+      <div class="field">
+        <label for="payout-notes">Notas (opcional)</label>
+        <input type="text" id="payout-notes" placeholder="Ej. pago semana 3" />
+      </div>
+      <button class="btn btn-success btn-block" id="btn-register-payout" type="button">Registrar pago</button>
+      <button class="btn btn-outline btn-block" id="btn-close-detail" type="button" style="margin-top:0.5rem">Cerrar</button>
+    </div>
+  </div>
+
+  <script type="module">
+    import { requireRole } from "../js/auth.js";
+    import { supabase } from "../js/supabase-client.js";
+    import { renderSidebar, formatMoney, formatDate, showAlert, clearAlert } from "../js/layout.js";
+
+    let profile;
+    let currentProfileId = null;
+
+    (async () => {
+      try {
+        ({ profile } = await requireRole(["admin"]));
+      } catch {
+        return;
+      }
+
+      renderSidebar(profile, "pagos");
+      setCurrentWeekInputs();
+      await loadPayouts();
+
+      document.getElementById("btn-filter").addEventListener("click", loadPayouts);
+      document.getElementById("btn-current-week").addEventListener("click", () => {
+        setCurrentWeekInputs();
+        loadPayouts();
+      });
+      document.getElementById("btn-close-detail").addEventListener("click", () => {
+        document.getElementById("detail-overlay").style.display = "none";
+      });
+      document.getElementById("btn-register-payout").addEventListener("click", registrarPago);
+    })();
+
+    function setCurrentWeekInputs() {
+      const now = new Date();
+      const day = now.getDay(); // 0=domingo
+      const diffToMonday = day === 0 ? -6 : 1 - day;
+      const monday = new Date(now);
+      monday.setDate(now.getDate() + diffToMonday);
+      const sunday = new Date(monday);
+      sunday.setDate(monday.getDate() + 6);
+
+      document.getElementById("start-date").value = monday.toISOString().slice(0, 10);
+      document.getElementById("end-date").value = sunday.toISOString().slice(0, 10);
+    }
+
+    async function loadPayouts() {
+      const start = document.getElementById("start-date").value;
+      const end = document.getElementById("end-date").value;
+      const tbody = document.getElementById("payouts-body");
+      tbody.innerHTML = `<tr><td colspan="5" class="empty-hint">Cargando...</td></tr>`;
+
+      const { data, error } = await supabase.rpc("get_weekly_payouts", { p_start: start, p_end: end });
+
+      if (error) {
+        showAlert("alert-box", "No se pudo cargar el panel de pagos: " + error.message);
+        return;
+      }
+
+      const rows = data || [];
+      const total = rows.reduce((s, r) => s + Number(r.monto_pendiente), 0);
+      document.querySelectorAll("#stat-grid .stat-card .value")[0].textContent = formatMoney(total);
+      document.querySelectorAll("#stat-grid .stat-card .value")[1].textContent = rows.length;
+
+      if (!rows.length) {
+        tbody.innerHTML = `<tr><td colspan="5" class="empty-hint">No hay comisiones pendientes en este rango.</td></tr>`;
+        return;
+      }
+
+      const roleLabel = { admin: "Admin", leader: "Líder", gestor: "Gestor" };
+
+      tbody.innerHTML = rows
+        .map(
+          (r) => `
+          <tr>
+            <td>${r.full_name}</td>
+            <td>${roleLabel[r.role] || r.role}</td>
+            <td>${r.cantidad_vales}</td>
+            <td>${formatMoney(r.monto_pendiente)}</td>
+            <td><button class="btn btn-outline btn-sm" data-detail="${r.profile_id}" data-name="${r.full_name}" data-monto="${r.monto_pendiente}" type="button">Ver detalle</button></td>
+          </tr>`
+        )
+        .join("");
+
+      tbody.querySelectorAll("[data-detail]").forEach((btn) => {
+        btn.addEventListener("click", () => abrirDetalle(btn.dataset.detail, btn.dataset.name, btn.dataset.monto));
+      });
+    }
+
+    async function abrirDetalle(profileId, name, monto) {
+      currentProfileId = profileId;
+      const start = document.getElementById("start-date").value;
+      const end = document.getElementById("end-date").value;
+
+      const { data, error } = await supabase.rpc("get_weekly_payout_detalle", {
+        p_profile_id: profileId,
+        p_start: start,
+        p_end: end,
+      });
+
+      document.getElementById("detail-title").textContent = `Detalle — ${name}`;
+      document.getElementById("payout-amount").value = Number(monto).toFixed(2);
+      document.getElementById("payout-notes").value = "";
+
+      if (error) {
+        document.getElementById("detail-body").innerHTML = `<tr><td colspan="4">Error: ${error.message}</td></tr>`;
+      } else {
+        document.getElementById("detail-body").innerHTML = (data || [])
+          .map(
+            (d) => `
+            <tr>
+              <td>${d.vale_number}</td>
+              <td>${d.rol_en_este_vale === "gestor" ? "Como gestor" : "Como líder"}</td>
+              <td>${formatMoney(d.monto)}</td>
+              <td>${formatDate(d.approved_at)}</td>
+            </tr>`
+          )
+          .join("");
+      }
+
+      document.getElementById("detail-overlay").style.display = "flex";
+    }
+
+    async function registrarPago() {
+      const amount = parseFloat(document.getElementById("payout-amount").value);
+      const notes = document.getElementById("payout-notes").value.trim();
+
+      if (isNaN(amount) || amount <= 0) {
+        alert("Ingresa un monto válido.");
+        return;
+      }
+
+      const { error } = await supabase.from("payouts").insert({
+        profile_id: currentProfileId,
+        amount,
+        notes: notes || null,
+      });
+
+      if (error) {
+        alert("No se pudo registrar el pago: " + error.message);
+        return;
+      }
+
+      document.getElementById("detail-overlay").style.display = "none";
+      loadPayouts();
+    }
+  </script>
+</body>
+</html>

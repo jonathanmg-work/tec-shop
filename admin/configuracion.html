@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Configuración | Admin</title>
+  <meta name="robots" content="noindex, nofollow" />
+  <link rel="stylesheet" href="../css/style.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar"></aside>
+
+    <main class="main-content">
+      <h1 class="page-title">Configuración</h1>
+      <p class="page-subtitle">Ajustes generales del sistema.</p>
+
+      <div id="alert-box"></div>
+
+      <div class="card" style="max-width:520px">
+        <h3 style="margin-top:0">WhatsApp de administración</h3>
+        <p style="color:var(--text-muted); font-size:0.84rem">
+          Número al que los gestores envían sus vales. Escríbelo con código de país, sin espacios ni el signo "+".
+          Ejemplo: 17871234567
+        </p>
+        <div class="field">
+          <label for="whatsapp-number">Número</label>
+          <input type="text" id="whatsapp-number" placeholder="17871234567" />
+        </div>
+        <button class="btn btn-primary" id="btn-save-whatsapp" type="button">Guardar número</button>
+      </div>
+
+      <div class="card" style="max-width:520px">
+        <h3 style="margin-top:0">Override por defecto de líderes</h3>
+        <p style="color:var(--text-muted); font-size:0.84rem">
+          Porcentaje sugerido al crear un líder nuevo. El override real de cada líder se ajusta individualmente
+          en su ficha y es el que se usa al calcular comisiones.
+        </p>
+        <div class="field">
+          <label for="default-override">Porcentaje (%)</label>
+          <input type="number" id="default-override" step="0.5" min="0" max="100" />
+        </div>
+        <button class="btn btn-primary" id="btn-save-override" type="button">Guardar porcentaje</button>
+      </div>
+
+      <div class="card" style="max-width:520px">
+        <h3 style="margin-top:0">Override por líder</h3>
+        <table>
+          <thead><tr><th>Líder</th><th>Override actual</th><th>Nuevo %</th><th></th></tr></thead>
+          <tbody id="leaders-body"><tr><td colspan="4" class="empty-hint">Cargando...</td></tr></tbody>
+        </table>
+      </div>
+    </main>
+  </div>
+
+  <script type="module">
+    import { requireRole } from "../js/auth.js";
+    import { supabase } from "../js/supabase-client.js";
+    import { renderSidebar, showAlert, clearAlert, escapeHtml } from "../js/layout.js";
+
+    (async () => {
+      let profile;
+      try {
+        ({ profile } = await requireRole(["admin"]));
+      } catch {
+        return;
+      }
+
+      renderSidebar(profile, "configuracion");
+      await loadSettings();
+      await loadLeaders();
+
+      document.getElementById("btn-save-whatsapp").addEventListener("click", () =>
+        guardarSetting("whatsapp_admin_number", document.getElementById("whatsapp-number").value.trim())
+      );
+      document.getElementById("btn-save-override").addEventListener("click", () =>
+        guardarSetting("default_leader_override_percentage", document.getElementById("default-override").value)
+      );
+    })();
+
+    async function loadSettings() {
+      const { data, error } = await supabase.from("settings").select("*");
+      if (error) {
+        showAlert("alert-box", "No se pudo cargar la configuración: " + error.message);
+        return;
+      }
+      const map = Object.fromEntries((data || []).map((s) => [s.key, s.value]));
+      document.getElementById("whatsapp-number").value = map.whatsapp_admin_number || "";
+      document.getElementById("default-override").value = map.default_leader_override_percentage || "10";
+    }
+
+    async function guardarSetting(key, value) {
+      clearAlert("alert-box");
+      const { error } = await supabase.from("settings").update({ value: String(value) }).eq("key", key);
+      if (error) {
+        showAlert("alert-box", "No se pudo guardar: " + error.message);
+        return;
+      }
+      showAlert("alert-box", "Configuración guardada.", "success");
+    }
+
+    async function loadLeaders() {
+      const { data, error } = await supabase
+        .from("leaders")
+        .select("id, override_percentage, profiles(full_name, status)");
+
+      const tbody = document.getElementById("leaders-body");
+
+      if (error) {
+        tbody.innerHTML = `<tr><td colspan="4">Error: ${error.message}</td></tr>`;
+        return;
+      }
+
+      if (!data || !data.length) {
+        tbody.innerHTML = `<tr><td colspan="4" class="empty-hint">Aún no hay líderes creados.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = data
+        .map(
+          (l) => `
+          <tr>
+            <td>${escapeHtml(l.profiles?.full_name || "—")}</td>
+            <td>${l.override_percentage}%</td>
+            <td><input type="number" step="0.5" min="0" max="100" value="${l.override_percentage}" data-input="${l.id}" style="width:80px; background:var(--bg-elevated); border:1px solid var(--border); border-radius:6px; color:var(--text); padding:0.3rem;" /></td>
+            <td><button class="btn btn-outline btn-sm" data-save-leader="${l.id}" type="button">Guardar</button></td>
+          </tr>`
+        )
+        .join("");
+
+      tbody.querySelectorAll("[data-save-leader]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const id = btn.dataset.saveLeader;
+          const input = tbody.querySelector(`[data-input="${id}"]`);
+          const value = parseFloat(input.value);
+
+          if (isNaN(value) || value < 0 || value > 100) {
+            showAlert("alert-box", "El porcentaje debe estar entre 0 y 100.");
+            return;
+          }
+
+          const { error: updErr } = await supabase.from("leaders").update({ override_percentage: value }).eq("id", id);
+          if (updErr) {
+            showAlert("alert-box", "No se pudo guardar: " + updErr.message);
+            return;
+          }
+          showAlert("alert-box", "Override actualizado.", "success");
+          loadLeaders();
+        });
+      });
+    }
+  </script>
+</body>
+</html>

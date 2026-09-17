@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mis vales | Gestor</title>
+  <meta name="robots" content="noindex, nofollow" />
+  <link rel="stylesheet" href="../css/style.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar"></aside>
+
+    <main class="main-content">
+      <h1 class="page-title">Mis vales</h1>
+      <p class="page-subtitle">Historial de todos tus vales y su estado.</p>
+
+      <div id="alert-box"></div>
+
+      <div class="tabs" id="tabs">
+        <button class="tab-btn active" data-status="">Todos</button>
+        <button class="tab-btn" data-status="sent">Enviados</button>
+        <button class="tab-btn" data-status="approved">Aprobados</button>
+        <button class="tab-btn" data-status="completed">Completados</button>
+        <button class="tab-btn" data-status="rejected">Rechazados</button>
+      </div>
+
+      <div class="card">
+        <table>
+          <thead>
+            <tr>
+              <th>Vale</th>
+              <th>Fecha</th>
+              <th>Total</th>
+              <th>Entrega</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody id="vales-body">
+            <tr><td colspan="5" class="empty-hint">Cargando...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </main>
+  </div>
+
+  <script type="module">
+    import { requireRole } from "../js/auth.js";
+    import { supabase } from "../js/supabase-client.js";
+    import { renderSidebar, formatMoney, formatDate, statusBadge, showAlert } from "../js/layout.js";
+
+    let profile;
+    let allVales = [];
+
+    (async () => {
+      try {
+        ({ profile } = await requireRole(["gestor"]));
+      } catch {
+        return;
+      }
+
+      renderSidebar(profile, "mis-vales");
+      await loadVales();
+
+      document.querySelectorAll("#tabs .tab-btn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          document.querySelectorAll("#tabs .tab-btn").forEach((b) => b.classList.remove("active"));
+          btn.classList.add("active");
+          renderTable(btn.dataset.status);
+        });
+      });
+    })();
+
+    async function loadVales() {
+      const { data, error } = await supabase
+        .from("vales")
+        .select("*")
+        .eq("gestor_id", profile.id)
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        showAlert("alert-box", "No se pudieron cargar tus vales: " + error.message);
+        return;
+      }
+      allVales = data || [];
+      renderTable("");
+    }
+
+    function renderTable(statusFilter) {
+      const rows = statusFilter ? allVales.filter((v) => v.status === statusFilter) : allVales;
+      const tbody = document.getElementById("vales-body");
+
+      if (!rows.length) {
+        tbody.innerHTML = `<tr><td colspan="5" class="empty-hint">No hay vales en esta vista.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = rows
+        .map(
+          (v) => `
+          <tr>
+            <td>${v.vale_number}</td>
+            <td>${formatDate(v.created_at)}</td>
+            <td>${formatMoney(v.total_amount)}</td>
+            <td>${v.delivery_method === "delivery" ? "Envío" : "Recogida"}</td>
+            <td>${statusBadge(v.status)}</td>
+          </tr>`
+        )
+        .join("");
+    }
+  </script>
+</body>
+</html>

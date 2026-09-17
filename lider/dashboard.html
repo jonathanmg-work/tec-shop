@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard | Líder</title>
+  <meta name="robots" content="noindex, nofollow" />
+  <link rel="stylesheet" href="../css/style.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar"></aside>
+
+    <main class="main-content">
+      <h1 class="page-title">Tu red</h1>
+      <p class="page-subtitle">Resumen de ventas y tu comisión (override) generada por tus gestores.</p>
+
+      <div id="alert-box"></div>
+
+      <div class="stat-grid" id="stat-grid">
+        <div class="stat-card"><div class="value">—</div><div class="label">Gestores activos</div></div>
+        <div class="stat-card"><div class="value">—</div><div class="label">Total vendido por tu red</div></div>
+        <div class="stat-card"><div class="value">—</div><div class="label">Tu comisión acumulada</div></div>
+      </div>
+
+      <div class="card">
+        <h3 style="margin-top:0">Vales recientes de tu red</h3>
+        <p style="color:var(--text-muted); font-size:0.8rem; margin-top:-0.5rem">
+          Por privacidad del cliente, no se muestran nombre, teléfono ni dirección.
+        </p>
+        <table>
+          <thead>
+            <tr><th>Vale</th><th>Gestor</th><th>Entrega</th><th>Total</th><th>Estado</th><th>Fecha</th></tr>
+          </thead>
+          <tbody id="vales-body">
+            <tr><td colspan="6" class="empty-hint">Cargando...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </main>
+  </div>
+
+  <script type="module">
+    import { requireRole } from "../js/auth.js";
+    import { supabase } from "../js/supabase-client.js";
+    import { renderSidebar, formatMoney, formatDate, statusBadge, showAlert } from "../js/layout.js";
+
+    (async () => {
+      let profile;
+      try {
+        ({ profile } = await requireRole(["leader"]));
+      } catch {
+        return;
+      }
+
+      renderSidebar(profile, "dashboard");
+
+      try {
+        const [{ data: resumen, error: resumenErr }, { data: vales, error: valesErr }] = await Promise.all([
+          supabase.rpc("get_lider_resumen_gestores"),
+          supabase.rpc("get_lider_vales"),
+        ]);
+
+        if (resumenErr) throw resumenErr;
+        if (valesErr) throw valesErr;
+
+        const activos = (resumen || []).length;
+        const totalVendido = (resumen || []).reduce((sum, g) => sum + Number(g.total_vendido), 0);
+        const comisionTotal = (resumen || []).reduce((sum, g) => sum + Number(g.comision_generada_lider), 0);
+
+        const cards = document.querySelectorAll("#stat-grid .stat-card .value");
+        cards[0].textContent = activos;
+        cards[1].textContent = formatMoney(totalVendido);
+        cards[2].textContent = formatMoney(comisionTotal);
+
+        const tbody = document.getElementById("vales-body");
+        const recientes = (vales || []).slice(0, 15);
+
+        if (!recientes.length) {
+          tbody.innerHTML = `<tr><td colspan="6" class="empty-hint">Aún no hay vales en tu red.</td></tr>`;
+        } else {
+          tbody.innerHTML = recientes
+            .map(
+              (v) => `
+              <tr>
+                <td>${v.vale_number}</td>
+                <td>${v.gestor_nombre}</td>
+                <td>${v.delivery_method === "delivery" ? "Envío" : "Recogida"}</td>
+                <td>${formatMoney(v.total_amount)}</td>
+                <td>${statusBadge(v.status)}</td>
+                <td>${formatDate(v.created_at)}</td>
+              </tr>`
+            )
+            .join("");
+        }
+      } catch (err) {
+        showAlert("alert-box", "No se pudo cargar tu resumen: " + err.message);
+      }
+    })();
+  </script>
+</body>
+</html>

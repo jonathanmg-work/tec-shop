@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard | Gestor</title>
+  <meta name="robots" content="noindex, nofollow" />
+  <link rel="stylesheet" href="../css/style.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar"></aside>
+
+    <main class="main-content">
+      <h1 class="page-title">Tu resumen</h1>
+      <p class="page-subtitle">Estado de tus ventas y comisiones.</p>
+
+      <div id="alert-box"></div>
+
+      <div class="stat-grid" id="stat-grid">
+        <div class="stat-card"><div class="value">—</div><div class="label">Vales enviados (pendientes de aprobación)</div></div>
+        <div class="stat-card"><div class="value">—</div><div class="label">Vales aprobados</div></div>
+        <div class="stat-card"><div class="value">—</div><div class="label">Comisión pendiente de pago</div></div>
+        <div class="stat-card"><div class="value">—</div><div class="label">Comisión ya cobrada</div></div>
+      </div>
+
+      <div class="card">
+        <h3 style="margin-top:0">Empieza una venta</h3>
+        <p style="color:var(--text-muted); font-size:0.88rem">Explora el catálogo de gestores, arma el vale y envíalo por WhatsApp en pocos pasos.</p>
+        <a href="catalogo.html" class="btn btn-primary">Ir al catálogo</a>
+      </div>
+    </main>
+  </div>
+
+  <script type="module">
+    import { requireRole } from "../js/auth.js";
+    import { supabase } from "../js/supabase-client.js";
+    import { renderSidebar, formatMoney, showAlert } from "../js/layout.js";
+
+    (async () => {
+      let profile;
+      try {
+        ({ profile } = await requireRole(["gestor"]));
+      } catch {
+        return;
+      }
+
+      renderSidebar(profile, "dashboard");
+
+      try {
+        const [{ count: sentCount }, { count: approvedCount }, { data: commissions }] = await Promise.all([
+          supabase.from("vales").select("id", { count: "exact", head: true }).eq("gestor_id", profile.id).eq("status", "sent"),
+          supabase.from("vales").select("id", { count: "exact", head: true }).eq("gestor_id", profile.id).eq("status", "approved"),
+          supabase.from("commissions").select("gestor_commission, status").eq("gestor_id", profile.id),
+        ]);
+
+        const pendiente = (commissions || [])
+          .filter((c) => c.status === "pending")
+          .reduce((sum, c) => sum + Number(c.gestor_commission), 0);
+        const pagada = (commissions || [])
+          .filter((c) => c.status === "paid")
+          .reduce((sum, c) => sum + Number(c.gestor_commission), 0);
+
+        const cards = document.querySelectorAll("#stat-grid .stat-card .value");
+        cards[0].textContent = sentCount ?? 0;
+        cards[1].textContent = approvedCount ?? 0;
+        cards[2].textContent = formatMoney(pendiente);
+        cards[3].textContent = formatMoney(pagada);
+      } catch (err) {
+        showAlert("alert-box", "No se pudo cargar el resumen: " + err.message);
+      }
+    })();
+  </script>
+</body>
+</html>

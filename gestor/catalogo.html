@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Catálogo | Gestor</title>
+  <meta name="robots" content="noindex, nofollow" />
+  <link rel="stylesheet" href="../css/style.css" />
+  <style>
+    .catalogo-layout { display: grid; grid-template-columns: 1fr 340px; gap: 1.4rem; align-items: start; }
+    @media (max-width: 980px) { .catalogo-layout { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar"></aside>
+
+    <main class="main-content">
+      <h1 class="page-title">Catálogo de gestores</h1>
+      <p class="page-subtitle">Arma el vale con los productos del cliente y envíalo por WhatsApp.</p>
+
+      <div id="alert-box"></div>
+
+      <div class="field" style="max-width:360px">
+        <label for="search">Buscar producto</label>
+        <input type="search" id="search" placeholder="Ej. AstroCharge" />
+      </div>
+
+      <div class="catalogo-layout">
+        <div class="catalog-grid" id="catalog-grid">
+          <p class="empty-hint">Cargando catálogo...</p>
+        </div>
+
+        <div class="cart-panel card">
+          <h3 style="margin-top:0">Carrito</h3>
+          <div id="cart-items"><p class="empty-hint">Aún no has agregado productos.</p></div>
+
+          <div style="display:flex; justify-content:space-between; font-weight:700; margin:0.9rem 0; padding-top:0.6rem; border-top:1px solid var(--border);">
+            <span>Total</span>
+            <span id="cart-total">$0.00</span>
+          </div>
+
+          <hr style="border-color:var(--border); margin:1rem 0" />
+
+          <h4 style="margin:0 0 0.7rem">Datos del cliente</h4>
+          <div class="field">
+            <label for="customer-name">Nombre</label>
+            <input type="text" id="customer-name" placeholder="Nombre del cliente" />
+          </div>
+          <div class="field">
+            <label for="customer-phone">Teléfono</label>
+            <input type="text" id="customer-phone" placeholder="Teléfono" />
+          </div>
+          <div class="field">
+            <label for="delivery-method">Entrega</label>
+            <select id="delivery-method">
+              <option value="pickup">Recogida en tienda</option>
+              <option value="delivery">Envío a domicilio</option>
+            </select>
+          </div>
+          <div class="field" id="address-field">
+            <label for="customer-address">Dirección</label>
+            <input type="text" id="customer-address" placeholder="Dirección de entrega" />
+          </div>
+          <div class="field">
+            <label for="notes">Notas (opcional)</label>
+            <textarea id="notes" rows="2" placeholder="Instrucciones adicionales..."></textarea>
+          </div>
+
+          <button class="btn btn-primary btn-block" id="btn-generate" type="button" disabled>Generar vale</button>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Panel de confirmación tras generar el vale -->
+  <div id="confirm-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); align-items:center; justify-content:center; z-index:50;">
+    <div class="card" style="max-width:420px; width:90%;">
+      <h3 style="margin-top:0">Vale generado ✅</h3>
+      <p id="confirm-vale-number" style="color:var(--text-muted); font-size:0.88rem"></p>
+      <p style="font-size:0.85rem">Envíalo por WhatsApp para que quede pendiente de aprobación.</p>
+      <a href="#" id="btn-send-whatsapp" target="_blank" rel="noopener" class="btn btn-success btn-block" style="margin-bottom:0.6rem">Enviar por WhatsApp</a>
+      <a href="mis-vales.html" class="btn btn-outline btn-block">Ver mis vales</a>
+    </div>
+  </div>
+
+  <script type="module">
+    import { requireRole } from "../js/auth.js";
+    import { supabase } from "../js/supabase-client.js";
+    import { renderSidebar, formatMoney, showAlert, escapeHtml } from "../js/layout.js";
+
+    let profile;
+    let catalog = [];
+    let whatsappNumber = "";
+    // cart: { [productId]: { product, quantity } }
+    const cart = {};
+
+    (async () => {
+      try {
+        ({ profile } = await requireRole(["gestor"]));
+      } catch {
+        return;
+      }
+
+      renderSidebar(profile, "catalogo");
+      await Promise.all([loadCatalog(), loadWhatsAppNumber()]);
+      restoreCartFromSession();
+      renderCart();
+
+      document.getElementById("search").addEventListener("input", (e) => {
+        renderCatalog(e.target.value.trim().toLowerCase());
+      });
+
+      document.getElementById("delivery-method").addEventListener("change", (e) => {
+        document.getElementById("address-field").style.display = e.target.value === "delivery" ? "flex" : "none";
+      });
+
+      document.getElementById("btn-generate").addEventListener("click", generarVale);
+    })();
+
+    async function loadCatalog() {
+      const { data, error } = await supabase
+        .from("catalogo_gestor")
+        .select("*")
+        .eq("is_active", true)
+        .order("name");
+
+      if (error) {
+        showAlert("alert-box", "No se pudo cargar el catálogo: " + error.message);
+        return;
+      }
+      catalog = data || [];
+      renderCatalog("");
+    }
+
+    async function loadWhatsAppNumber() {
+      const { data } = await supabase.from("settings").select("value").eq("key", "whatsapp_admin_number").single();
+      whatsappNumber = data?.value || "";
+    }
+
+    function renderCatalog(query) {
+      const grid = document.getElementById("catalog-grid");
+      const filtered = catalog.filter((p) => p.name.toLowerCase().includes(query) || (p.description || "").toLowerCase().includes(query));
+
+      if (!filtered.length) {
+        grid.innerHTML = `<p class="empty-hint">No hay productos que coincidan.</p>`;
+        return;
+      }
+
+      grid.innerHTML = filtered
+        .map((p) => {
+          const commissionLabel =
+            p.commission_type === "percent" ? `Comisión: ${p.commission_value}%` : `Comisión: ${formatMoney(p.commission_value)}`;
+          return `
+          <div class="catalog-item">
+            <h4>${escapeHtml(p.name)}</h4>
+            <p>${escapeHtml(p.description || "")}</p>
+            <div class="price-row">
+              <span class="price">${formatMoney(p.price)}</span>
+              <span class="commission">${commissionLabel}</span>
+            </div>
+            <button class="btn btn-outline btn-sm btn-block" data-add="${p.id}" type="button">Agregar al vale</button>
+          </div>`;
+        })
+        .join("");
+
+      grid.querySelectorAll("[data-add]").forEach((btn) => {
+        btn.addEventListener("click", () => addToCart(Number(btn.dataset.add)));
+      });
+    }
+
+    function addToCart(productId) {
+      const product = catalog.find((p) => p.id === productId);
+      if (!product) return;
+      if (!cart[productId]) {
+        cart[productId] = { product, quantity: 1 };
+      } else {
+        cart[productId].quantity += 1;
+      }
+      persistCartToSession();
+      renderCart();
+    }
+
+    function changeQty(productId, delta) {
+      const entry = cart[productId];
+      if (!entry) return;
+      entry.quantity += delta;
+      if (entry.quantity <= 0) delete cart[productId];
+      persistCartToSession();
+      renderCart();
+    }
+
+    function renderCart() {
+      const container = document.getElementById("cart-items");
+      const entries = Object.values(cart);
+      const btnGenerate = document.getElementById("btn-generate");
+
+      if (!entries.length) {
+        container.innerHTML = `<p class="empty-hint">Aún no has agregado productos.</p>`;
+        document.getElementById("cart-total").textContent = formatMoney(0);
+        btnGenerate.disabled = true;
+        return;
+      }
+
+      let total = 0;
+      container.innerHTML = entries
+        .map(({ product, quantity }) => {
+          const lineTotal = product.price * quantity;
+          total += lineTotal;
+          return `
+          <div class="cart-row">
+            <div>
+              <div>${escapeHtml(product.name)}</div>
+              <div style="color:var(--text-muted); font-size:0.76rem">${formatMoney(product.price)} c/u</div>
+            </div>
+            <div class="qty-controls">
+              <button type="button" data-minus="${product.id}">−</button>
+              <span>${quantity}</span>
+              <button type="button" data-plus="${product.id}">+</button>
+            </div>
+          </div>`;
+        })
+        .join("");
+
+      document.getElementById("cart-total").textContent = formatMoney(total);
+      btnGenerate.disabled = false;
+
+      container.querySelectorAll("[data-plus]").forEach((b) => b.addEventListener("click", () => changeQty(Number(b.dataset.plus), 1)));
+      container.querySelectorAll("[data-minus]").forEach((b) => b.addEventListener("click", () => changeQty(Number(b.dataset.minus), -1)));
+    }
+
+    function persistCartToSession() {
+      const simplified = Object.fromEntries(Object.entries(cart).map(([id, e]) => [id, e.quantity]));
+      sessionStorage.setItem("gestor_cart", JSON.stringify(simplified));
+    }
+
+    function restoreCartFromSession() {
+      try {
+        const raw = sessionStorage.getItem("gestor_cart");
+        if (!raw) return;
+        const simplified = JSON.parse(raw);
+        Object.entries(simplified).forEach(([id, qty]) => {
+          const product = catalog.find((p) => p.id === Number(id));
+          if (product) cart[id] = { product, quantity: qty };
+        });
+      } catch {
+        /* si el carrito guardado no es válido, simplemente se ignora */
+      }
+    }
+
+    async function generarVale() {
+      const btn = document.getElementById("btn-generate");
+      const customerName = document.getElementById("customer-name").value.trim();
+      const customerPhone = document.getElementById("customer-phone").value.trim();
+      const deliveryMethod = document.getElementById("delivery-method").value;
+      const customerAddress = document.getElementById("customer-address").value.trim();
+      const notes = document.getElementById("notes").value.trim();
+
+      if (!customerName || !customerPhone) {
+        showAlert("alert-box", "Ingresa al menos el nombre y teléfono del cliente.");
+        return;
+      }
+      if (deliveryMethod === "delivery" && !customerAddress) {
+        showAlert("alert-box", "Ingresa la dirección para el envío a domicilio.");
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = "Generando...";
+
+      try {
+        // 1. Crear el vale en estado 'draft'
+        const { data: vale, error: valeErr } = await supabase
+          .from("vales")
+          .insert({
+            gestor_id: profile.id,
+            customer_name: customerName,
+            customer_phone: customerPhone,
+            customer_address: deliveryMethod === "delivery" ? customerAddress : null,
+            delivery_method: deliveryMethod,
+            notes: notes || null,
+            status: "draft",
+          })
+          .select()
+          .single();
+
+        if (valeErr) throw valeErr;
+
+        // 2. Insertar los ítems (el servidor recalcula precio/comisión reales vía trigger)
+        const items = Object.values(cart).map(({ product, quantity }) => ({
+          vale_id: vale.id,
+          product_id: product.id,
+          quantity,
+          unit_price: product.price, // el trigger lo sobreescribe con el precio real del catálogo
+          commission_amount: 0, // el trigger lo calcula
+        }));
+
+        const { error: itemsErr } = await supabase.from("vale_items").insert(items);
+        if (itemsErr) throw itemsErr;
+
+        // 3. Pasar el vale a 'sent' vía RPC (valida que tenga ítems)
+        const { error: sendErr } = await supabase.rpc("enviar_vale", { p_vale_id: vale.id });
+        if (sendErr) throw sendErr;
+
+        // 4. Traer el total ya recalculado por el servidor
+        const { data: valeFinal } = await supabase.from("vales").select("*").eq("id", vale.id).single();
+
+        // Se arma el resumen de productos ANTES de vaciar el carrito
+        const lineasProductos = Object.values(cart).map(
+          ({ product, quantity }) => `• ${quantity}x ${product.name} — ${formatMoney(product.price * quantity)}`
+        );
+
+        mostrarConfirmacion(valeFinal, customerName, customerPhone, deliveryMethod, customerAddress, notes, lineasProductos);
+
+        // Limpiar carrito y formulario
+        Object.keys(cart).forEach((k) => delete cart[k]);
+        sessionStorage.removeItem("gestor_cart");
+        renderCart();
+        document.getElementById("customer-name").value = "";
+        document.getElementById("customer-phone").value = "";
+        document.getElementById("customer-address").value = "";
+        document.getElementById("notes").value = "";
+      } catch (err) {
+        showAlert("alert-box", "No se pudo generar el vale: " + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Generar vale";
+      }
+    }
+
+    function mostrarConfirmacion(vale, customerName, customerPhone, deliveryMethod, customerAddress, notes, lineasProductos) {
+      document.getElementById("confirm-vale-number").textContent = `Vale ${vale.vale_number} · Total ${formatMoney(vale.total_amount)}`;
+
+      const entrega = deliveryMethod === "delivery" ? "Envío a domicilio" : "Recogida en tienda";
+
+      const partes = [
+        `*Nuevo vale ${vale.vale_number}*`,
+        ``,
+        `*Productos:*`,
+        ...lineasProductos,
+        ``,
+        `*Total:* ${formatMoney(vale.total_amount)}`,
+        ``,
+        `*Cliente:* ${customerName}`,
+        `*Teléfono:* ${customerPhone}`,
+        `*Entrega:* ${entrega}`,
+      ];
+
+      if (deliveryMethod === "delivery" && customerAddress) {
+        partes.push(`*Dirección:* ${customerAddress}`);
+      }
+      if (notes) {
+        partes.push(`*Notas:* ${notes}`);
+      }
+
+      partes.push(``, `*Gestor:* ${profile.full_name}`);
+
+      const mensaje = partes.join("\n");
+
+      const link = `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(mensaje)}`;
+      document.getElementById("btn-send-whatsapp").href = link;
+      document.getElementById("confirm-overlay").style.display = "flex";
+    }
+  </script>
+</body>
+</html>

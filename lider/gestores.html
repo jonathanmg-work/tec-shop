@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mis gestores | Líder</title>
+  <meta name="robots" content="noindex, nofollow" />
+  <link rel="stylesheet" href="../css/style.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar"></aside>
+
+    <main class="main-content">
+      <h1 class="page-title">Mis gestores</h1>
+      <p class="page-subtitle">Tu red de gestores y sus ventas. Las cuentas nuevas quedan pendientes de aprobación del administrador.</p>
+
+      <div id="alert-box"></div>
+
+      <div class="card" style="margin-bottom:1.4rem">
+        <h3 style="margin-top:0">Crear nuevo gestor</h3>
+        <div class="field-row">
+          <div class="field">
+            <label for="new-name">Nombre completo</label>
+            <input type="text" id="new-name" placeholder="Nombre del gestor" />
+          </div>
+          <div class="field">
+            <label for="new-email">Correo</label>
+            <input type="email" id="new-email" placeholder="correo@ejemplo.com" />
+          </div>
+        </div>
+        <div class="field">
+          <label for="new-password">Contraseña temporal</label>
+          <input type="password" id="new-password" placeholder="Mínimo 8 caracteres" />
+        </div>
+        <button class="btn btn-primary" id="btn-create" type="button">Crear gestor (queda pendiente de aprobación)</button>
+      </div>
+
+      <div class="card">
+        <h3 style="margin-top:0">Resumen por gestor</h3>
+        <table>
+          <thead>
+            <tr><th>Nombre</th><th>Tipo</th><th>Total vendido</th><th>Tu comisión generada</th></tr>
+          </thead>
+          <tbody id="gestores-body">
+            <tr><td colspan="4" class="empty-hint">Cargando...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </main>
+  </div>
+
+  <script type="module">
+    import { requireRole, getSession } from "../js/auth.js";
+    import { supabase, CREATE_USER_FUNCTION_URL } from "../js/supabase-client.js";
+    import { renderSidebar, formatMoney, showAlert, clearAlert } from "../js/layout.js";
+
+    let profile;
+
+    (async () => {
+      try {
+        ({ profile } = await requireRole(["leader"]));
+      } catch {
+        return;
+      }
+
+      renderSidebar(profile, "gestores");
+      await loadResumen();
+
+      document.getElementById("btn-create").addEventListener("click", crearGestor);
+    })();
+
+    async function loadResumen() {
+      const { data, error } = await supabase.rpc("get_lider_resumen_gestores");
+      const tbody = document.getElementById("gestores-body");
+
+      if (error) {
+        showAlert("alert-box", "No se pudo cargar tu red: " + error.message);
+        return;
+      }
+
+      if (!data || !data.length) {
+        tbody.innerHTML = `<tr><td colspan="4" class="empty-hint">Aún no tienes gestores activos.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = data
+        .map(
+          (g) => `
+          <tr>
+            <td>${g.gestor_nombre}</td>
+            <td>${g.is_vip ? '<span class="badge badge-vip">VIP</span>' : "Normal"}</td>
+            <td>${formatMoney(g.total_vendido)}</td>
+            <td>${g.is_vip ? "—" : formatMoney(g.comision_generada_lider)}</td>
+          </tr>`
+        )
+        .join("");
+    }
+
+    async function crearGestor() {
+      clearAlert("alert-box");
+      const name = document.getElementById("new-name").value.trim();
+      const email = document.getElementById("new-email").value.trim();
+      const password = document.getElementById("new-password").value;
+      const btn = document.getElementById("btn-create");
+
+      if (!name || !email || !password) {
+        showAlert("alert-box", "Completa nombre, correo y contraseña.");
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = "Creando...";
+
+      try {
+        const session = await getSession();
+        const res = await fetch(CREATE_USER_FUNCTION_URL, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({ email, password, full_name: name, role: "gestor" }),
+        });
+
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error || "No se pudo crear el gestor.");
+
+        showAlert("alert-box", result.message, "success");
+        document.getElementById("new-name").value = "";
+        document.getElementById("new-email").value = "";
+        document.getElementById("new-password").value = "";
+      } catch (err) {
+        showAlert("alert-box", err.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Crear gestor (queda pendiente de aprobación)";
+      }
+    }
+  </script>
+</body>
+</html>
